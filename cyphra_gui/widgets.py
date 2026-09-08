@@ -67,7 +67,7 @@ class DropZone(QFrame):
         files = [
             url.toLocalFile()
             for url in event.mimeData().urls()
-            if url.isLocalFile() and Path(url.toLocalFile()).is_file()
+            if url.isLocalFile() and Path(url.toLocalFile()).exists()
         ]
         if files:
             self.files_dropped.emit(files)
