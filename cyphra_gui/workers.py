@@ -34,16 +34,22 @@ class OperationWorker(QThread):
     def run(self) -> None:
         try:
             try:
+                import inspect
+                sig = inspect.signature(self.operation)
+                params = sig.parameters
+                has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+                kwargs: dict[str, Any] = {}
+                if "progress" in params or has_var_kw:
+                    kwargs["progress"] = self.progress.emit
+                if "cancel_event" in params or has_var_kw:
+                    kwargs["cancel_event"] = self.cancel_event
+                result = self.operation(**kwargs)
+            except (ValueError, TypeError):
+                # Fallback for callables without inspectable signature
                 result = self.operation(
                     progress=self.progress.emit,
                     cancel_event=self.cancel_event,
                 )
-            except TypeError as error:
-                # Adapters supplied by applications sometimes expose a
-                # parameterless callable. Do not hide errors from its body.
-                if "unexpected keyword argument" not in str(error):
-                    raise
-                result = self.operation()
             if self.cancel_event.is_set():
                 self.cancelled.emit()
             else:

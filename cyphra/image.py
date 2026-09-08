@@ -69,7 +69,7 @@ class Image:
 
     @classmethod
     def encrypt(cls, source, destination=None, password=None, metadata=None,
-                progress=None, cancellation=None):
+                progress=None, cancellation=None, cipher_id: int = 0, kdf_id: int = 0):
         if password is None:
             raise TypeError("password is required")
         inp, close_in, total = _open_input(source)
@@ -79,7 +79,7 @@ class Image:
         out, close_out = _open_output(destination)
         completed = 0
         try:
-            with EncryptStream(out, password, KIND_IMAGE) as encrypted:
+            with EncryptStream(out, password, KIND_IMAGE, cipher_id=cipher_id, kdf_id=kdf_id) as encrypted:
                 meta = _metadata_bytes(metadata)
                 encrypted.write(bytes([RECORD_METADATA]) + struct.pack(">I", len(meta)) + meta)
                 while True:

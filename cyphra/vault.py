@@ -93,7 +93,7 @@ def _path_record(kind: int, entry: VaultEntry) -> bytes:
 class Vault:
     @classmethod
     def create(cls, source, destination=None, password=None, metadata=None,
-               progress=None, cancellation=None):
+               progress=None, cancellation=None, cipher_id: int = 0, kdf_id: int = 0):
         if password is None:
             raise TypeError("password is required")
         root, entries, total = _entries(os.fspath(source))
@@ -106,7 +106,7 @@ class Vault:
             out, close_out = open(os.fspath(destination), "wb"), True
         completed = 0
         try:
-            with EncryptStream(out, password, KIND_VAULT) as encrypted:
+            with EncryptStream(out, password, KIND_VAULT, cipher_id=cipher_id, kdf_id=kdf_id) as encrypted:
                 meta = _metadata_bytes(metadata)
                 encrypted.write(bytes([RECORD_METADATA]) + struct.pack(">I", len(meta)) + meta)
                 for entry in entries:

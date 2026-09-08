@@ -9,8 +9,12 @@ from typing import BinaryIO, Iterator
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-from .crypto import (DEFAULT_ITERATIONS, NONCE_SIZE, SALT_SIZE, TAG_SIZE,
-                     derive_key, new_nonce, new_salt, password_bytes)
+from .crypto import (CIPHER_AES_256_GCM, CIPHER_AES_256_GCM_SIV,
+                     CIPHER_CHACHA20_POLY1305, DEFAULT_ITERATIONS,
+                     KDF_ARGON2ID, KDF_PBKDF2_SHA256, KDF_SCRYPT,
+                     NONCE_SIZE, SALT_SIZE, TAG_SIZE, derive_key,
+                     derive_key_multi, get_aead_cipher, new_nonce, new_salt,
+                     password_bytes)
 from .errors import AuthenticationError, FormatError
 
 MAGIC = b"CYPhRA\x00\x01"
@@ -31,6 +35,14 @@ class ContainerHeader:
     salt: bytes
     nonce: bytes
     flags: int = 0
+
+    @property
+    def cipher_id(self) -> int:
+        return self.flags & 0xFF
+
+    @property
+    def kdf_id(self) -> int:
+        return (self.flags >> 8) & 0xFF
 
     def pack(self) -> bytes:
         if self.kind not in (KIND_IMAGE, KIND_VAULT):
@@ -57,28 +69,46 @@ def read_header(stream: BinaryIO) -> tuple[ContainerHeader, bytes]:
 
 
 class EncryptStream:
-    """Writes an AES-GCM ciphertext stream and appends its authentication tag."""
+    """Writes an authenticated ciphertext stream and appends its authentication tag."""
     def __init__(self, stream: BinaryIO, password, kind: int,
-                 iterations: int = DEFAULT_ITERATIONS):
+                 iterations: int = DEFAULT_ITERATIONS,
+                 cipher_id: int = CIPHER_AES_256_GCM,
+                 kdf_id: int = KDF_PBKDF2_SHA256):
         salt, nonce = new_salt(), new_nonce()
-        self.header = ContainerHeader(kind, iterations, salt, nonce)
+        flags = ((kdf_id & 0xFF) << 8) | (cipher_id & 0xFF)
+        self.header = ContainerHeader(kind, iterations, salt, nonce, flags=flags)
         self.stream = stream
         self.stream.write(self.header.pack())
-        key = derive_key(password, salt, iterations)
-        self._cipher = Cipher(algorithms.AES(key), modes.GCM(nonce)).encryptor()
-        self._cipher.authenticate_additional_data(self.header.pack())
+        self.cipher_id = cipher_id
+        self.kdf_id = kdf_id
+        key = derive_key_multi(password, salt, kdf_id=kdf_id, iterations=iterations)
         self._closed = False
+
+        if cipher_id == CIPHER_AES_256_GCM:
+            self._cipher = Cipher(algorithms.AES(key), modes.GCM(nonce)).encryptor()
+            self._cipher.authenticate_additional_data(self.header.pack())
+        else:
+            self._aead = get_aead_cipher(cipher_id, key)
+            self._buffer = bytearray()
 
     def write(self, data: bytes) -> None:
         if self._closed:
             raise ValueError("stream is closed")
         if data:
-            self.stream.write(self._cipher.update(data))
+            if self.cipher_id == CIPHER_AES_256_GCM:
+                self.stream.write(self._cipher.update(data))
+            else:
+                self._buffer.extend(data)
 
     def close(self) -> None:
         if not self._closed:
-            self.stream.write(self._cipher.finalize())
-            self.stream.write(self._cipher.tag)
+            if self.cipher_id == CIPHER_AES_256_GCM:
+                self.stream.write(self._cipher.finalize())
+                self.stream.write(self._cipher.tag)
+            else:
+                ct = self._aead.encrypt(self.header.nonce, bytes(self._buffer), self.header.pack())
+                self.stream.write(ct)
+                self._buffer.clear()
             self._closed = True
 
     def __enter__(self):
@@ -90,34 +120,46 @@ class EncryptStream:
 
 def decrypt_chunks(stream: BinaryIO, password, expected_kind: int,
                    chunk_size: int = 1024 * 1024) -> Iterator[bytes]:
-    """Yield authenticated plaintext chunks, retaining the final GCM tag."""
+    """Yield authenticated plaintext chunks, verifying authentication."""
     header, raw_header = read_header(stream)
     if header.kind != expected_kind:
         raise FormatError("container type does not match the requested operation")
-    key = derive_key(password, header.salt, header.iterations)
-    decryptor = Cipher(algorithms.AES(key), modes.GCM(header.nonce)).decryptor()
-    decryptor.authenticate_additional_data(raw_header)
-    trailing = b""
-    try:
-        while True:
-            block = stream.read(chunk_size)
-            if not block:
-                break
-            trailing += block
-            if len(trailing) > TAG_SIZE:
-                body, trailing = trailing[:-TAG_SIZE], trailing[-TAG_SIZE:]
-                plain = decryptor.update(body)
-                if plain:
-                    yield plain
-        if len(trailing) != TAG_SIZE:
-            raise FormatError("truncated authenticated ciphertext")
-        plain = decryptor.finalize_with_tag(trailing)
-        if plain:
-            yield plain
-    except InvalidTag as exc:
-        raise AuthenticationError("password is incorrect or container is corrupt") from exc
-    except ValueError as exc:
-        raise FormatError("invalid encrypted container") from exc
+    key = derive_key_multi(password, header.salt, kdf_id=header.kdf_id, iterations=header.iterations)
+
+    if header.cipher_id == CIPHER_AES_256_GCM:
+        decryptor = Cipher(algorithms.AES(key), modes.GCM(header.nonce)).decryptor()
+        decryptor.authenticate_additional_data(raw_header)
+        trailing = b""
+        try:
+            while True:
+                block = stream.read(chunk_size)
+                if not block:
+                    break
+                trailing += block
+                if len(trailing) > TAG_SIZE:
+                    body, trailing = trailing[:-TAG_SIZE], trailing[-TAG_SIZE:]
+                    plain = decryptor.update(body)
+                    if plain:
+                        yield plain
+            if len(trailing) != TAG_SIZE:
+                raise FormatError("truncated authenticated ciphertext")
+            plain = decryptor.finalize_with_tag(trailing)
+            if plain:
+                yield plain
+        except InvalidTag as exc:
+            raise AuthenticationError("password is incorrect or container is corrupt") from exc
+        except ValueError as exc:
+            raise FormatError("invalid encrypted container") from exc
+    else:
+        # AEAD decrypt (ChaCha20Poly1305, AESGCMSIV)
+        aead = get_aead_cipher(header.cipher_id, key)
+        ciphertext = stream.read()
+        try:
+            plaintext = aead.decrypt(header.nonce, ciphertext, raw_header)
+            for offset in range(0, len(plaintext), chunk_size):
+                yield plaintext[offset:offset + chunk_size]
+        except Exception as exc:
+            raise AuthenticationError("password is incorrect or container is corrupt") from exc
 
 
 class PlainReader:

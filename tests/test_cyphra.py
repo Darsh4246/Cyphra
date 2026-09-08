@@ -249,3 +249,41 @@ def test_payload_helper_uses_authenticated_ciphertext() -> None:
     encrypted = encrypt_payload(b"payload", PASSWORD, associated_data=b"context")
     assert encrypted[:16] != b"payload"
     assert len(encrypted) > len(b"payload")
+
+
+@pytest.mark.parametrize("cipher_id", [0, 1, 2])
+@pytest.mark.parametrize("kdf_id", [0, 1, 2])
+def test_all_cipher_and_kdf_matrix(tmp_path: Path, cipher_id: int, kdf_id: int) -> None:
+    source_file = tmp_path / "secret.txt"
+    source_file.write_text("Top secret document verified across all cryptographic suites!", encoding="utf-8")
+    encrypted_file = tmp_path / f"encrypted_{cipher_id}_{kdf_id}.cyphra"
+    decrypted_file = tmp_path / f"decrypted_{cipher_id}_{kdf_id}.txt"
+
+    Image.encrypt(
+        source_file,
+        encrypted_file,
+        password=PASSWORD,
+        cipher_id=cipher_id,
+        kdf_id=kdf_id,
+    )
+    assert encrypted_file.exists()
+
+    Image.decrypt(encrypted_file, decrypted_file, password=PASSWORD)
+    assert decrypted_file.read_text(encoding="utf-8") == "Top secret document verified across all cryptographic suites!"
+
+
+def test_tampered_chacha_ciphertext_fails_auth(tmp_path: Path) -> None:
+    source_file = tmp_path / "data.txt"
+    source_file.write_text("Authenticity is guaranteed by Poly1305 MAC!", encoding="utf-8")
+    encrypted_file = tmp_path / "chacha.cyphra"
+    decrypted_file = tmp_path / "restored.txt"
+
+    Image.encrypt(source_file, encrypted_file, password=PASSWORD, cipher_id=1, kdf_id=1)
+    raw = bytearray(encrypted_file.read_bytes())
+    # Tamper with the last byte (part of authentication tag)
+    raw[-1] ^= 0xFF
+    encrypted_file.write_bytes(bytes(raw))
+
+    with pytest.raises(AuthenticationError):
+        Image.decrypt(encrypted_file, decrypted_file, password=PASSWORD)
+
