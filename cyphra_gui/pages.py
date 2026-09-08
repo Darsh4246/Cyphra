@@ -9,6 +9,7 @@ from typing import Callable
 from PySide6.QtCore import QSettings, Qt, Signal, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -100,6 +101,8 @@ class OperationPage(QWidget):
         self._build_progress()
         self._build_result()
         root = QVBoxLayout(self)
+        root.setContentsMargins(24, 24, 24, 24)
+        root.setSpacing(16)
         root.addWidget(self.stack)
         self._show_step(0)
 
@@ -358,6 +361,8 @@ class OperationPage(QWidget):
         self._show_step(4)
 
     def _failure(self, message: str) -> None:
+        if "unsupported cyphra container" in message.lower():
+            message = "This is not a supported Cyphra Image or Vault container."
         self.result.show_error(message)
         self._show_step(4)
 
@@ -386,6 +391,8 @@ class HashPage(QWidget):
         self.adapter = adapter
         self.worker: OperationWorker | None = None
         root = QVBoxLayout(self)
+        root.setContentsMargins(24, 24, 24, 24)
+        root.setSpacing(16)
         heading = QLabel("Hash & verify")
         heading.setObjectName("pageTitle")
         subtitle = QLabel("Create a fingerprint for text or a file, then compare it with a known value.")
@@ -403,7 +410,7 @@ class HashPage(QWidget):
 
     def _algorithm_combo(self) -> QComboBox:
         self.algorithm = QComboBox()
-        self.algorithm.addItems(["SHA-256", "SHA-512", "SHA-1", "MD5"])
+        self.algorithm.addItems(["SHA-256", "SHA-512"])
         return self.algorithm
 
     def _text_tab(self) -> QWidget:
@@ -424,7 +431,8 @@ class HashPage(QWidget):
         self.text_result.setReadOnly(True)
         self.text_result.setPlaceholderText("Your hash will appear here")
         frame_layout.addWidget(self.text_result)
-        copy = _button("Copy hash", lambda: self._copy(self.text_result), False)
+        copy = _button("Copy hash", lambda: self._copy(self.text_result, self.text_compare_status), False)
+        copy.setObjectName("copyButton")
         frame_layout.addWidget(copy, alignment=Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(frame)
         compare, compare_layout = card("Compare with a known hash")
@@ -453,7 +461,7 @@ class HashPage(QWidget):
         controls = QHBoxLayout()
         controls.addWidget(QLabel("Algorithm"))
         self.file_algorithm = QComboBox()
-        self.file_algorithm.addItems(["SHA-256", "SHA-512", "SHA-1", "MD5"])
+        self.file_algorithm.addItems(["SHA-256", "SHA-512"])
         controls.addWidget(self.file_algorithm)
         controls.addStretch()
         controls.addWidget(_button("Calculate hash", self._hash_file, True))
@@ -466,7 +474,8 @@ class HashPage(QWidget):
         self.file_result.setReadOnly(True)
         self.file_result.setPlaceholderText("Your hash will appear here")
         frame_layout.addWidget(self.file_result)
-        copy = _button("Copy hash", lambda: self._copy(self.file_result), False)
+        copy = _button("Copy hash", lambda: self._copy(self.file_result, self.file_compare_status), False)
+        copy.setObjectName("copyButton")
         frame_layout.addWidget(copy, alignment=Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(frame)
         compare, compare_layout = card("Compare with a known hash")
@@ -519,9 +528,15 @@ class HashPage(QWidget):
         if self.worker:
             self.worker.cancel()
 
-    def _copy(self, field: QLineEdit) -> None:
-        if field.text():
-            field.copy()
+    def _copy(self, field: QLineEdit, status: QLabel) -> None:
+        value = field.text().strip()
+        if not value:
+            status.setText("Calculate a hash first.")
+            status.setStyleSheet("color: #fbbf24;")
+            return
+        QApplication.clipboard().setText(value)
+        status.setText("Hash copied to the clipboard.")
+        status.setStyleSheet("color: #4ade80;")
 
     def _compare_text(self) -> None:
         self._compare(self.text_result, self.text_expected, self.text_compare_status)
@@ -545,6 +560,8 @@ class SettingsPage(QWidget):
         super().__init__(parent)
         settings = QSettings("Cyphra", "Cyphra")
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
         heading = QLabel("Settings")
         heading.setObjectName("pageTitle")
         subtitle = QLabel("Tune Cyphra to your workflow. Changes are saved automatically.")

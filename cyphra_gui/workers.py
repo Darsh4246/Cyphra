@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import threading
-import traceback
 from typing import Any, Callable
 
 from PySide6.QtCore import QThread, Signal
@@ -58,4 +57,4 @@ class OperationWorker(QThread):
                 self.cancelled.emit()
                 return
             message = str(error).strip() or error.__class__.__name__
-            self.failed.emit(message + "\n" + traceback.format_exc(limit=1).strip())
+            self.failed.emit(message)
