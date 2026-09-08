@@ -25,7 +25,7 @@ OutputDir=Output
 OutputBaseFilename=Cyphra-Setup-{#MyAppVersion}
 SetupIconFile=logo.ico
 UninstallDisplayIcon={app}\logo.ico
-Compression=lzma2/max
+Compression=lzma2/fast
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -57,11 +57,14 @@ Source: "pyproject.toml"; DestDir: "{app}"; Flags: ignoreversion
 ; Launcher batch file for Python runtime execution
 Source: "launcher.bat"; DestDir: "{app}"; DestName: "cyphra_launch.bat"; Flags: ignoreversion
 
+; Embedded Python 3.14 Runtime with pre-installed cryptography and PySide6
+Source: "python-3.14.7-embed-amd64\*"; DestDir: "{app}\python"; Excludes: "*\__pycache__\*,*.pyc"; Flags: ignoreversion recursesubdirs createallsubdirs
+
 [Icons]
 ; Start Menu and Desktop Shortcuts
-Name: "{group}\{#MyAppName}"; Filename: "{app}\cyphra_launch.bat"; IconFilename: "{app}\logo.ico"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\cyphra_launch.bat"; IconFilename: "{app}\logo.ico"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"; Tasks: desktopicon
 
 [Registry]
 ; -------------------------------------------------------------
@@ -78,7 +81,7 @@ Root: HKA; Subkey: "Software\Classes\Cyphra.EncryptedContainer\DefaultIcon"; Val
 
 ; Open command for .cyphra files
 Root: HKA; Subkey: "Software\Classes\Cyphra.EncryptedContainer\shell\open"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "Cyphra Vault"; Flags: uninsdeletekey; Tasks: assoc_cyphra
-Root: HKA; Subkey: "Software\Classes\Cyphra.EncryptedContainer\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\cyphra_launch.bat"" ""%1"""; Flags: uninsdeletekey; Tasks: assoc_cyphra
+Root: HKA; Subkey: "Software\Classes\Cyphra.EncryptedContainer\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\python\pythonw.exe"" ""{app}\main.py"" ""%1"""; Flags: uninsdeletekey; Tasks: assoc_cyphra
 
 ; -------------------------------------------------------------
 ; File Association: .cyphra-vault (Cyphra Encrypted Vault Archive)
@@ -94,8 +97,8 @@ Root: HKA; Subkey: "Software\Classes\Cyphra.VaultArchive\DefaultIcon"; ValueType
 
 ; Open command for .cyphra-vault files
 Root: HKA; Subkey: "Software\Classes\Cyphra.VaultArchive\shell\open"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "Cyphra Vault"; Flags: uninsdeletekey; Tasks: assoc_vault
-Root: HKA; Subkey: "Software\Classes\Cyphra.VaultArchive\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\cyphra_launch.bat"" ""%1"""; Flags: uninsdeletekey; Tasks: assoc_vault
+Root: HKA; Subkey: "Software\Classes\Cyphra.VaultArchive\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\python\pythonw.exe"" ""{app}\main.py"" ""%1"""; Flags: uninsdeletekey; Tasks: assoc_vault
 
 [Run]
-Filename: "{app}\cyphra_launch.bat"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 

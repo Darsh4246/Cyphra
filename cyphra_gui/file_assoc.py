@@ -10,11 +10,12 @@ from pathlib import Path
 def get_preferred_icon_path() -> Path:
     """Find the best available .ico icon file."""
     candidates = [
-        Path(r"E:\Darsh\Cyphra\logo.ico"),
         Path(__file__).resolve().parent / "assets" / "logo.ico",
         Path(__file__).resolve().parent / "assets" / "cyphra_icon.ico",
-        Path(sys.prefix) / "logo.ico",
         Path(__file__).resolve().parent.parent / "logo.ico",
+        Path(sys.prefix) / "logo.ico",
+        Path(sys.prefix).parent / "logo.ico",
+        Path(r"E:\Darsh\Cyphra\logo.ico"),
     ]
     for c in candidates:
         if c.exists() and c.is_file():
