@@ -42,8 +42,8 @@ Name: "assoc_vault"; Description: "Associate .cyphra-vault files (Encrypted Arch
 
 [Files]
 ; Core application code and modules
-Source: "cyphra\*"; DestDir: "{app}\cyphra"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "cyphra_gui\*"; DestDir: "{app}\cyphra_gui"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "cyphra\*"; DestDir: "{app}\cyphra"; Excludes: "*\__pycache__\*,*.pyc"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "cyphra_gui\*"; DestDir: "{app}\cyphra_gui"; Excludes: "*\__pycache__\*,*.pyc"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "logo.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "logo.png"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
@@ -99,21 +99,3 @@ Root: HKA; Subkey: "Software\Classes\Cyphra.VaultArchive\shell\open\command"; Va
 [Run]
 Filename: "{app}\cyphra_launch.bat"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
 
-[Code]
-// Broadcast Shell Change Notification on Windows to instantly update icon cache in Explorer
-procedure CurStepChanged(CurStep: TSetupStep);
-begin
-  if CurStep = ssPostInstall then
-  begin
-    // Notify shell that file associations and icon mappings have changed
-    ChangeSysAssociations();
-  end;
-end;
-
-procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-begin
-  if CurUninstallStep = usPostUninstall then
-  begin
-    ChangeSysAssociations();
-  end;
-end;
