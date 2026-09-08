@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cyphra"
+version = "0.1.0"
+description = "Local-first encrypted containers with a polished PySide6 GUI"
+requires-python = ">=3.10"
+dependencies = ["cryptography>=41", "PySide6>=6.5"]
+
+[tool.setuptools.packages.find]
+include = ["cyphra*", "cyphra_gui*"]
