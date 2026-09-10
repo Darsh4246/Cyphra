@@ -71,9 +71,9 @@ Source: "python-3.14.7-embed-amd64\*"; DestDir: "{app}\python"; Excludes: "*\__p
 [Icons]
 ; Start Menu and Desktop Shortcuts
 Name: "{group}\{#MyAppName}"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"
-Name: "{group}\Check for Updates"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\main.py"" --check-update"; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"; Tasks: desktopicon
+
 
 [Registry]
 ; -------------------------------------------------------------

@@ -47,7 +47,9 @@ def test_updater_check_and_update_offline_no_error(tmp_path):
         success, message = updater.check_and_update(
             status_callback=status_calls.append,
             progress_callback=progress_calls.append,
+            force=True,
         )
+
 
     # Must return True (no error thrown or reported as fatal)
     assert success is True
