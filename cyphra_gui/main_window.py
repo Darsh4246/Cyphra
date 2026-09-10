@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, QRect, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QRect, QSize, Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QFontDatabase, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -24,8 +24,11 @@ from PySide6.QtWidgets import (
 
 from .core_adapter import CryptoAdapter
 from .pages import HashPage, HomePage, OperationPage, SettingsPage
+from .updater import CyphraUpdater
+from .workers import OperationWorker
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+
 
 
 def get_asset_path(name: str) -> Path:
@@ -436,6 +439,17 @@ QLabel {{
     font-size: 11px;
     font-weight: 600;
 }}
+
+#updateBadge {{
+    background-color: #1e1b4b;
+    color: #a5b4fc;
+    border: 1px solid #4338ca;
+    border-radius: 12px;
+    padding: 4px 12px;
+    font-size: 11px;
+    font-weight: 600;
+}}
+
 
 /* Page Titles and Subtitles */
 #pageTitle {{
@@ -1136,8 +1150,9 @@ class Sidebar(QFrame):
 
         footer = QLabel("● Local Protected")
         footer.setObjectName("sidebarFooterText")
-        v_label = QLabel("Cyphra v0.1.0 · Zero Telemetry")
+        v_label = QLabel("Cyphra v0.2.0 · Zero Telemetry")
         v_label.setObjectName("sidebarVersion")
+
 
         footer_layout.addWidget(footer)
         footer_layout.addWidget(v_label)
@@ -1236,13 +1251,27 @@ class MainWindow(QMainWindow):
         self.breadcrumbs = QLabel("Workspace  ›  Dashboard")
         self.breadcrumbs.setObjectName("breadcrumbs")
 
+        self.update_badge = QLabel("●  Update Ready (Restart to apply)")
+        self.update_badge.setObjectName("updateBadge")
+        self.update_badge.setToolTip("Latest code changes were pulled from GitHub. Restart Cyphra to run the updated version.")
+        self.update_badge.setVisible(False)
+
         self.core_status = QLabel("●  Crypto Core Active" if self.adapter.available else "●  Adapter Mode")
         self.core_status.setObjectName("coreBadge")
 
         top_layout.addWidget(self.breadcrumbs)
         top_layout.addStretch()
+        top_layout.addWidget(self.update_badge)
         top_layout.addWidget(self.core_status)
         content_layout.addWidget(topbar)
+
+        # Periodic background check timer while app is running
+        self.updater = CyphraUpdater()
+        self.update_timer = QTimer(self)
+        self.update_timer.setInterval(30 * 60 * 1000)  # Check every 30 minutes
+        self.update_timer.timeout.connect(self._check_periodic_updates)
+        self.update_timer.start()
+
 
         # Pages
         self.pages = QStackedWidget()
@@ -1288,3 +1317,23 @@ class MainWindow(QMainWindow):
         name = page_names.get(key, key.title())
         self.breadcrumbs.setText(f"Workspace  ›  <span style='color: #f8fafc; font-weight: 600;'>{name}</span>")
         self.sidebar.select(key)
+
+    def _check_periodic_updates(self) -> None:
+        """Periodically check for updates in background while app remains open."""
+        if hasattr(self, "updater") and self.updater.should_check_update(force=False):
+            def _bg_check(**kwargs) -> bool:
+                ok, msg = self.updater.check_and_update()
+                if ok and any(word in msg.lower() for word in ("updated", "pulled", "commits")):
+                    return True
+                return False
+
+            worker = OperationWorker(_bg_check, self)
+
+            def _on_done(has_update: bool) -> None:
+                if has_update and hasattr(self, "update_badge"):
+                    self.update_badge.setVisible(True)
+
+            worker.succeeded.connect(_on_done)
+            self._bg_update_worker = worker
+            worker.start()
+

@@ -4,8 +4,9 @@
 ; and associates .cyphra and .cyphra-vault files with logo.ico.
 
 #define MyAppName "Cyphra"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "Cyphra Security"
+
 #define MyAppURL "https://github.com/Darsh4246/Cyphra"
 #define MyAppExeName "Cyphra.exe"
 
@@ -37,8 +38,15 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "autoupdate"; Description: "Automatically check and pull code updates from GitHub on launch"; GroupDescription: "Application Updates:"; Flags: checkedonce
 Name: "assoc_cyphra"; Description: "Associate .cyphra files (Encrypted Containers) with Cyphra"; GroupDescription: "File Associations:"
 Name: "assoc_vault"; Description: "Associate .cyphra-vault files (Encrypted Archives) with Cyphra"; GroupDescription: "File Associations:"
+
+[Dirs]
+; Allow in-app updater to update Python code files without requiring UAC elevation on every launch
+Name: "{app}"; Permissions: users-modify
+Name: "{app}\cyphra"; Permissions: users-modify
+Name: "{app}\cyphra_gui"; Permissions: users-modify
 
 [Files]
 ; Core application code and modules
@@ -63,13 +71,20 @@ Source: "python-3.14.7-embed-amd64\*"; DestDir: "{app}\python"; Excludes: "*\__p
 [Icons]
 ; Start Menu and Desktop Shortcuts
 Name: "{group}\{#MyAppName}"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"
+Name: "{group}\Check for Updates"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\main.py"" --check-update"; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\logo.ico"; Tasks: desktopicon
 
 [Registry]
 ; -------------------------------------------------------------
+; Auto-Updater Startup Preference
+; -------------------------------------------------------------
+Root: HKA; Subkey: "Software\Cyphra\Cyphra"; ValueType: string; ValueName: "auto_update"; ValueData: "true"; Flags: uninsdeletevalue; Tasks: autoupdate
+
+; -------------------------------------------------------------
 ; File Association: .cyphra (Cyphra Encrypted Container)
 ; -------------------------------------------------------------
+
 Root: HKA; Subkey: "Software\Classes\.cyphra"; ValueType: string; ValueName: ""; ValueData: "Cyphra.EncryptedContainer"; Flags: uninsdeletevalue; Tasks: assoc_cyphra
 Root: HKA; Subkey: "Software\Classes\.cyphra"; ValueType: string; ValueName: "Content Type"; ValueData: "application/x-cyphra"; Flags: uninsdeletevalue; Tasks: assoc_cyphra
 

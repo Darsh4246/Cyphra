@@ -1310,7 +1310,67 @@ class SettingsPage(QWidget):
         diag_layout.addWidget(reset_btn, alignment=Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(diag_card)
 
-        # 6. About Card
+        # 6. Application Updates & GitHub Synchronization Card
+        update_card, update_layout = card(
+            "Application Updates & GitHub Synchronization",
+            "Automatically check and pull the latest code improvements directly from GitHub (https://github.com/Darsh4246/Cyphra).",
+        )
+        from .updater import CyphraUpdater
+        self._updater_instance = CyphraUpdater()
+
+        self.auto_update = QCheckBox("Enable automated code updates from GitHub")
+        self.auto_update.setChecked(self.settings.value("auto_update", True, type=bool))
+        self.auto_update.toggled.connect(lambda val: self.settings.setValue("auto_update", val))
+        update_layout.addWidget(self.auto_update)
+
+        u_form = QFormLayout()
+        u_form.setSpacing(12)
+
+        self.update_freq = QComboBox()
+        self.update_freq.addItems([
+            "Every Application Launch",
+            "Every 4 Hours (Recommended)",
+            "Daily (Every 24 Hours)",
+            "Weekly (Every 7 Days)",
+            "Manual Check Only",
+        ])
+        saved_freq = self.settings.value("update_frequency", 1, type=int)
+        self.update_freq.setCurrentIndex(saved_freq)
+        self.update_freq.currentIndexChanged.connect(lambda idx: self.settings.setValue("update_frequency", idx))
+        u_form.addRow("Update Check Frequency", self.update_freq)
+        update_layout.addLayout(u_form)
+
+        self.last_check_label = QLabel(f"Last checked: {self._updater_instance.get_last_check_display()}")
+        self.last_check_label.setStyleSheet("color: #64748b; font-size: 11.5px;")
+        update_layout.addWidget(self.last_check_label)
+
+        self.update_status = QLabel("● Automatic updates configured (Target: https://github.com/Darsh4246/Cyphra)")
+        self.update_status.setStyleSheet("color: #38bdf8; font-size: 12px;")
+        update_layout.addWidget(self.update_status)
+
+        def _do_manual_update():
+            self.update_status.setText("Checking GitHub for updates...")
+            self.update_status.setStyleSheet("color: #f59e0b; font-size: 12px;")
+            QApplication.processEvents()
+            ok, msg = self._updater_instance.check_and_update(
+                status_callback=lambda s: self.update_status.setText(f"● {s}"),
+                force=True,
+            )
+            self.last_check_label.setText(f"Last checked: {self._updater_instance.get_last_check_display()}")
+            if ok:
+                self.update_status.setText(f"✓ {msg}")
+                self.update_status.setStyleSheet("color: #10b981; font-weight: 600; font-size: 12px;")
+            else:
+                self.update_status.setText(f"● {msg}")
+                self.update_status.setStyleSheet("color: #94a3b8; font-size: 12px;")
+
+        update_btn = _button("🔄  Check for Updates Now", _do_manual_update, False, "secondaryButton")
+        update_layout.addWidget(update_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(update_card)
+
+
+        # 7. About Card
+
         about, about_layout = card("About Cyphra")
         about_h = QHBoxLayout()
         about_h.setContentsMargins(4, 4, 4, 4)
@@ -1328,8 +1388,9 @@ class SettingsPage(QWidget):
 
         about_text = QVBoxLayout()
         about_text.setSpacing(4)
-        v_label = QLabel("Cyphra Vault v0.1.0 · High-Assurance Multi-Cipher Cryptographic Vault")
+        v_label = QLabel("Cyphra Vault v0.2.0 · High-Assurance Multi-Cipher Cryptographic Vault")
         v_label.setObjectName("aboutTitle")
+
         d_label = QLabel(
             "Ciphers: AES-256-GCM, ChaCha20-Poly1305, AES-256-GCM-SIV · KDFs: Argon2id, PBKDF2, Scrypt\n"
             "Hashes: SHA-2, SHA-3, BLAKE2, MD5, SHA-1 · HMAC Authentication\n"
@@ -1357,4 +1418,8 @@ class SettingsPage(QWidget):
         self.case_ins.setChecked(True)
         self.remember.setChecked(True)
         self.secure_shred.setChecked(False)
+        self.auto_update.setChecked(True)
+        self.update_freq.setCurrentIndex(1)
         self.theme.setCurrentIndex(0)
+
+

@@ -5,10 +5,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from PySide6.QtCore import QSettings
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QApplication
 
 from .main_window import MainWindow, ensure_inter_font, get_asset_path
+from .splash import SplashScreen, SplashWorker
 
 
 def main() -> int:
@@ -43,23 +45,58 @@ def main() -> int:
         except Exception:
             pass
 
-    window = MainWindow()
+    # Parse command line options
+    args = sys.argv[1:]
+    no_splash = "--no-splash" in args
+    no_update = "--no-update" in args or "--skip-update" in args
+    check_update = "--check-update" in args
+    file_args = [a for a in args if not a.startswith("--")]
 
-    # If opened with a file argument (e.g. double-clicked from Windows Explorer)
-    if len(sys.argv) > 1:
-        initial_path = Path(sys.argv[1])
-        if initial_path.exists():
-            resolved = str(initial_path.resolve())
-            if initial_path.suffix.lower() in (".cyphra", ".cyphra-vault"):
-                window.show_page("decrypt")
-                window.page_map["decrypt"]._files_selected([resolved])
-            else:
-                window.show_page("encrypt")
-                window.page_map["encrypt"]._files_selected([resolved])
+    # Check update settings
+    settings = QSettings("Cyphra", "Cyphra")
+    auto_update_setting = settings.value("auto_update", True, type=bool)
+    should_update = (auto_update_setting or check_update) and not no_update
 
-    window.show()
+    def _setup_window() -> MainWindow:
+        win = MainWindow()
+        if file_args:
+            initial_path = Path(file_args[0])
+            if initial_path.exists():
+                resolved = str(initial_path.resolve())
+                if initial_path.suffix.lower() in (".cyphra", ".cyphra-vault"):
+                    win.show_page("decrypt")
+                    win.page_map["decrypt"]._files_selected([resolved])
+                else:
+                    win.show_page("encrypt")
+                    win.page_map["encrypt"]._files_selected([resolved])
+        return win
+
+    if no_splash:
+        window = _setup_window()
+        window.show()
+        return app.exec()
+
+    # Create & display async splash screen
+    splash = SplashScreen(font_family=font_family)
+    splash.fade_in()
+
+    worker = SplashWorker(enable_updater=should_update, force_update=check_update)
+    splash._worker = worker  # Prevent garbage collection
+
+
+    worker.status_changed.connect(splash.set_status)
+    worker.progress_changed.connect(splash.set_progress)
+
+    def _on_splash_finished() -> None:
+        window = _setup_window()
+        splash.finish_and_launch(window)
+
+    worker.finished.connect(_on_splash_finished)
+    worker.start()
+
     return app.exec()
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
