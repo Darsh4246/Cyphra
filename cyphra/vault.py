@@ -8,6 +8,7 @@ import os
 import shutil
 import stat
 import struct
+import tempfile
 import time
 from dataclasses import dataclass
 
@@ -293,3 +294,158 @@ class Vault:
         return metadata, entries
 
     inspect = list
+
+    # ------------------------------------------------------------------
+    # Vault Explorer helpers
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def read_header_flags(cls, source) -> tuple[int, int]:
+        """Return *(cipher_id, kdf_id)* from the vault header without decryption.
+
+        Used by :meth:`rebuild` to preserve the original algorithm when
+        re-encrypting after staged changes.
+        """
+        from .format import read_header
+        if hasattr(source, "read"):
+            inp, close_in = source, False
+        else:
+            inp, close_in = open(os.fspath(source), "rb"), True
+        try:
+            header, _ = read_header(inp)
+            return header.cipher_id, header.kdf_id
+        finally:
+            if close_in:
+                inp.close()
+
+    @classmethod
+    def extract_single(cls, source, entry_path: str, password=None) -> bytes:
+        """Stream-decrypt and return the raw bytes of one named entry.
+
+        *entry_path* must match the vault-internal path exactly
+        (e.g. ``"docs/report.pdf"``).  Raises :exc:`FileNotFoundError` when
+        the path is not present.
+        """
+        if password is None:
+            raise TypeError("password is required")
+        result: list[bytes | None] = [None]
+        target = entry_path.strip("/")
+
+        def _on_file(entry, reader):
+            if entry.path == target:
+                buf = bytearray()
+                while True:
+                    part = reader.u8()
+                    if part == RECORD_END_FILE:
+                        break
+                    if part != RECORD_DATA:
+                        raise FormatError("invalid vault file data record")
+                    ndata = reader.u32()
+                    if ndata > MAX_RECORD:
+                        raise FormatError("vault data record is too large")
+                    buf.extend(reader.read(ndata))
+                result[0] = bytes(buf)
+            else:
+                # Skip data for other files
+                while True:
+                    part = reader.u8()
+                    if part == RECORD_END_FILE:
+                        break
+                    if part != RECORD_DATA:
+                        raise FormatError("invalid vault file data record")
+                    ndata = reader.u32()
+                    if ndata > MAX_RECORD:
+                        raise FormatError("vault data record is too large")
+                    reader.read(ndata)
+
+        cls._read_entries(source, password, on_file=_on_file)
+        if result[0] is None:
+            raise FileNotFoundError(f"Entry not found in vault: {entry_path!r}")
+        return result[0]
+
+    @classmethod
+    def rebuild(cls, source, destination, password=None, *,
+                adds=None, removes=None, renames=None,
+                progress=None, cancellation=None):
+        """Re-encrypt the vault after applying staged changes.
+
+        Parameters
+        ----------
+        adds:
+            ``{vault_path: real_filesystem_path}`` — files/folders to inject.
+        removes:
+            Iterable of vault paths to delete.
+        renames:
+            ``{old_vault_path: new_vault_path}`` — paths to rename.
+
+        The cipher and KDF are preserved from the original vault header.
+        When *source* and *destination* are the same path the vault is
+        replaced atomically via a temporary file.
+        """
+        if password is None:
+            raise TypeError("password is required")
+
+        cipher_id, kdf_id = cls.read_header_flags(source)
+        adds = dict(adds or {})
+        removes = set(removes or [])
+        renames = dict(renames or {})
+
+        source_abs = os.path.abspath(os.fspath(source))
+        dest_abs = os.path.abspath(os.fspath(destination))
+        in_place = source_abs == dest_abs
+
+        with tempfile.TemporaryDirectory(prefix="cyphra_rebuild_") as tmpdir:
+            # 1. Extract existing contents
+            cls.extract(source_abs, tmpdir, password=password,
+                        overwrite=True, cancellation=cancellation)
+
+            # 2. Apply removes
+            for rm_path in removes:
+                full = os.path.join(tmpdir, *rm_path.split("/"))
+                if os.path.isfile(full):
+                    os.remove(full)
+                elif os.path.isdir(full):
+                    shutil.rmtree(full, ignore_errors=True)
+
+            # 3. Apply renames
+            for old_vp, new_vp in renames.items():
+                old_full = os.path.join(tmpdir, *old_vp.split("/"))
+                new_full = os.path.join(tmpdir, *new_vp.split("/"))
+                if os.path.exists(old_full):
+                    new_parent = os.path.dirname(new_full)
+                    if new_parent:
+                        os.makedirs(new_parent, exist_ok=True)
+                    shutil.move(old_full, new_full)
+
+            # 4. Apply adds
+            for vault_path, real_path in adds.items():
+                dest_full = os.path.join(tmpdir, *vault_path.split("/"))
+                parent = os.path.dirname(dest_full)
+                if parent:
+                    os.makedirs(parent, exist_ok=True)
+                if os.path.isdir(real_path):
+                    if os.path.exists(dest_full):
+                        shutil.rmtree(dest_full)
+                    shutil.copytree(real_path, dest_full)
+                else:
+                    shutil.copy2(real_path, dest_full)
+
+            # 5. Re-encrypt
+            if in_place:
+                tmp_out = dest_abs + ".tmp_rebuild"
+                try:
+                    cls.create(tmpdir, tmp_out, password=password,
+                               progress=progress, cancellation=cancellation,
+                               cipher_id=cipher_id, kdf_id=kdf_id)
+                    os.replace(tmp_out, dest_abs)
+                except Exception:
+                    if os.path.exists(tmp_out):
+                        try:
+                            os.remove(tmp_out)
+                        except OSError:
+                            pass
+                    raise
+            else:
+                cls.create(tmpdir, dest_abs, password=password,
+                           progress=progress, cancellation=cancellation,
+                           cipher_id=cipher_id, kdf_id=kdf_id)

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, Signal
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QPixmap
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFrame,
     QGraphicsOpacityEffect,
     QHBoxLayout,
@@ -628,3 +629,203 @@ class AlgorithmInfoCard(QFrame):
             self.specs_label.show()
         else:
             self.specs_label.hide()
+
+
+# ---------------------------------------------------------------------------
+# Key Source Selector
+# ---------------------------------------------------------------------------
+
+def _mk_btn(text: str, slot: Callable, object_name: str = "secondaryButton") -> QPushButton:
+    """Small helper — avoids circular import with pages._button."""
+    btn = QPushButton(text)
+    btn.setObjectName(object_name)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    if slot:
+        btn.clicked.connect(slot)
+    return btn
+
+
+class KeySourceSelector(QWidget):
+    """Toggle widget for choosing between Password, Keyfile, or Both (combined).
+
+    Exposes :meth:`get_effective_password` which returns the resolved secret
+    ready to pass to any Cyphra encryption/decryption call.
+    """
+
+    MODE_PASSWORD = "password"
+    MODE_KEYFILE  = "keyfile"
+    MODE_BOTH     = "both"
+
+    credential_changed = Signal()
+
+    def __init__(self, mode: str = "encrypt", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.mode = mode  # 'encrypt' or 'decrypt'
+        self._source_mode = self.MODE_PASSWORD
+        self._build()
+
+    # ------------------------------------------------------------------
+    # Construction
+    # ------------------------------------------------------------------
+
+    def _build(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(10)
+
+        # ---- Mode tab row ----
+        tab_row = QHBoxLayout()
+        tab_row.setSpacing(0)
+
+        self._btn_pw  = QPushButton("🔑  Password")
+        self._btn_kf  = QPushButton("📄  Keyfile")
+        self._btn_both = QPushButton("🔐  Both")
+
+        for btn, name in (
+            (self._btn_pw,   "keySourceTab"),
+            (self._btn_kf,   "keySourceTab"),
+            (self._btn_both, "keySourceTab"),
+        ):
+            btn.setCheckable(True)
+            btn.setObjectName(name)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            tab_row.addWidget(btn)
+
+        tab_row.addStretch()
+        root.addLayout(tab_row)
+
+        self._btn_pw.clicked.connect(lambda: self._set_mode(self.MODE_PASSWORD))
+        self._btn_kf.clicked.connect(lambda: self._set_mode(self.MODE_KEYFILE))
+        self._btn_both.clicked.connect(lambda: self._set_mode(self.MODE_BOTH))
+
+        # ---- Password widget ----
+        self.password_field = PasswordField(
+            label="Master password" if self.mode == "encrypt" else "Decryption password",
+            mode=self.mode,
+        )
+        self.password_field.value_changed.connect(lambda _: self.credential_changed.emit())
+        root.addWidget(self.password_field)
+
+        # ---- Keyfile widget ----
+        self._kf_widget = QWidget()
+        self._kf_widget.setObjectName("keyfileSection")
+        kf_root = QVBoxLayout(self._kf_widget)
+        kf_root.setContentsMargins(0, 0, 0, 0)
+        kf_root.setSpacing(6)
+
+        kf_label = QLabel("Keyfile")
+        kf_label.setObjectName("fieldLabel")
+        kf_root.addWidget(kf_label)
+
+        kf_row = QHBoxLayout()
+        kf_row.setSpacing(8)
+        self._kf_path = QLineEdit()
+        self._kf_path.setReadOnly(True)
+        self._kf_path.setPlaceholderText("No keyfile selected — browse or generate one")
+        self._kf_path.textChanged.connect(lambda _: self.credential_changed.emit())
+        kf_row.addWidget(self._kf_path, 1)
+        kf_row.addWidget(_mk_btn("Browse…", self._browse_keyfile))
+        kf_root.addLayout(kf_row)
+
+        if self.mode == "encrypt":
+            kf_root.addWidget(
+                _mk_btn(
+                    "🎲  Generate New Keyfile",
+                    self._generate_keyfile,
+                    "generatorButton",
+                )
+            )
+
+        kf_note = QLabel(
+            "💡 A keyfile is a 64-byte random token saved to disk. "
+            "Keep it secret and backed up — it cannot be recovered."
+        )
+        kf_note.setObjectName("mutedLabel")
+        kf_note.setWordWrap(True)
+        kf_root.addWidget(kf_note)
+        root.addWidget(self._kf_widget)
+
+        # Initial state
+        self._set_mode(self.MODE_PASSWORD)
+
+    # ------------------------------------------------------------------
+    # Mode switching
+    # ------------------------------------------------------------------
+
+    def _set_mode(self, mode: str) -> None:
+        self._source_mode = mode
+        self._btn_pw.setChecked(mode in (self.MODE_PASSWORD, self.MODE_BOTH))
+        self._btn_kf.setChecked(mode in (self.MODE_KEYFILE,  self.MODE_BOTH))
+        self._btn_both.setChecked(mode == self.MODE_BOTH)
+
+        self.password_field.setVisible(mode in (self.MODE_PASSWORD, self.MODE_BOTH))
+        self._kf_widget.setVisible(mode in (self.MODE_KEYFILE, self.MODE_BOTH))
+        self.credential_changed.emit()
+
+    # ------------------------------------------------------------------
+    # Keyfile actions
+    # ------------------------------------------------------------------
+
+    def _browse_keyfile(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Keyfile",
+            "",
+            "Cyphra Keyfiles (*.cyphra-key);;All Files (*)",
+        )
+        if path:
+            self._kf_path.setText(path)
+
+    def _generate_keyfile(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save New Keyfile",
+            "my_vault.cyphra-key",
+            "Cyphra Keyfiles (*.cyphra-key);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            from cyphra.keyfile import generate_keyfile
+            generate_keyfile(path)
+            self._kf_path.setText(path)
+        except Exception as exc:  # noqa: BLE001
+            # Surface error through the path field
+            self._kf_path.setPlaceholderText(f"Error: {exc}")
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
+    @property
+    def source_mode(self) -> str:
+        return self._source_mode
+
+    def get_password(self) -> str:
+        return self.password_field.text()
+
+    def get_keyfile_path(self) -> str:
+        return self._kf_path.text().strip()
+
+    def has_valid_credentials(self) -> bool:
+        """Return True when sufficient credentials are set for the current mode."""
+        mode = self._source_mode
+        if mode == self.MODE_PASSWORD:
+            return bool(self.get_password())
+        if mode == self.MODE_KEYFILE:
+            return bool(self.get_keyfile_path())
+        # Both
+        return bool(self.get_password()) and bool(self.get_keyfile_path())
+
+    def get_effective_password(self) -> str:
+        """Resolve and return the effective password string.
+
+        Raises :exc:`ValueError` when credentials are incomplete.
+        """
+        from cyphra.keyfile import resolve_key
+        pw = self.get_password() if self._source_mode in (self.MODE_PASSWORD, self.MODE_BOTH) else None
+        kf = self.get_keyfile_path() if self._source_mode in (self.MODE_KEYFILE, self.MODE_BOTH) else None
+        return resolve_key(pw or None, kf or None)
+
+    def clear(self) -> None:
+        self.password_field.clear()
+        self._kf_path.clear()
+        self._set_mode(self.MODE_PASSWORD)

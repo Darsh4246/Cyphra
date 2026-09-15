@@ -205,7 +205,7 @@ class SplashScreen(QWidget):
 
         header_row.addStretch()
 
-        version = QLabel("v0.2.0")
+        version = QLabel("v0.2.1")
         version.setObjectName("versionText")
         header_row.addWidget(version)
 

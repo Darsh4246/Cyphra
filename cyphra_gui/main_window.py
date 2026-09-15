@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from .core_adapter import CryptoAdapter
 from .pages import HashPage, HomePage, OperationPage, SettingsPage
+from .vault_explorer import VaultExplorerPage
 from .updater import CyphraUpdater
 from .workers import OperationWorker
 
@@ -1048,6 +1049,137 @@ QTabBar::tab:selected {{
     font-weight: 600;
     background: transparent;
 }}
+
+/* ---- Key Source Selector Tabs ---- */
+#keySourceTab {{
+    background-color: #0f1929;
+    color: #94a3b8;
+    border: 1px solid #1e293b;
+    border-radius: 0px;
+    padding: 7px 18px;
+    font-size: 13px;
+    font-weight: 600;
+}}
+#keySourceTab:first-child {{ border-radius: 8px 0 0 8px; }}
+#keySourceTab:last-child  {{ border-radius: 0 8px 8px 0; }}
+#keySourceTab:checked {{
+    background-color: #1c3a5e;
+    color: #38bdf8;
+    border-color: #2563eb;
+}}
+#keySourceTab:hover:!checked {{
+    background-color: #141c2c;
+    color: #e2e8f0;
+}}
+#generatorButton {{
+    background-color: transparent;
+    color: #38bdf8;
+    border: 1px solid #1e4d80;
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 12.5px;
+    font-weight: 600;
+}}
+#generatorButton:hover {{
+    background-color: #0c1e38;
+    border-color: #2563eb;
+    color: #60a5fa;
+}}
+
+/* ---- Vault Explorer ---- */
+#explorerTopBar {{
+    background-color: #0c1222;
+    border-bottom: 1px solid #1e293b;
+}}
+#explorerVaultName {{
+    color: #e2e8f0;
+    font-size: 14px;
+    font-weight: 700;
+    background: transparent;
+}}
+#unsavedBadge {{
+    color: #fbbf24;
+    background-color: #1c1500;
+    border: 1px solid #78350f;
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 600;
+}}
+#breadcrumbBar {{
+    background-color: #0b1120;
+    border-bottom: 1px solid #1a2740;
+}}
+#breadcrumbBtn {{
+    background: transparent;
+    border: none;
+    color: #64748b;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 2px 4px;
+}}
+#breadcrumbBtn:hover {{
+    color: #38bdf8;
+    text-decoration: underline;
+}}
+#breadcrumbSep {{
+    color: #334155;
+    background: transparent;
+    font-size: 14px;
+    padding: 0 2px;
+}}
+#explorerToolbar {{
+    background-color: #0d1526;
+    border-bottom: 1px solid #1a2740;
+}}
+#toolbarSep {{
+    color: #1e293b;
+    max-width: 1px;
+    margin: 6px 2px;
+}}
+QTreeWidget {{
+    background-color: #080e1c;
+    alternate-background-color: #0a1020;
+    border: none;
+    color: #e2e8f0;
+    font-size: 13px;
+    outline: 0;
+}}
+QTreeWidget::item {{
+    padding: 7px 8px;
+    border-bottom: 1px solid #0f1829;
+}}
+QTreeWidget::item:hover {{
+    background-color: #111d33;
+}}
+QTreeWidget::item:selected {{
+    background-color: #172a4a;
+    color: #f8fafc;
+}}
+QHeaderView::section {{
+    background-color: #0b1528;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+    border: none;
+    border-right: 1px solid #1a2740;
+    border-bottom: 1px solid #1a2740;
+    padding: 6px 12px;
+}}
+QHeaderView::section:hover {{
+    background-color: #111e35;
+    color: #94a3b8;
+}}
+#explorerStatusBar {{
+    background-color: #08101e;
+    border-top: 1px solid #1a2740;
+}}
+#explorerStatus {{
+    color: #475569;
+    font-size: 11.5px;
+    background: transparent;
+}}
 """
 
 
@@ -1108,10 +1240,11 @@ class Sidebar(QFrame):
         nav_font.setWeight(QFont.Weight.DemiBold)
 
         entries = [
-            ("⌂   Dashboard", "home"),
-            ("🔒  Encrypt Files", "encrypt"),
-            ("🔓  Decrypt Files", "decrypt"),
-            ("⚡  Hash & Verify", "hash"),
+            ("⌂   Dashboard",         "home"),
+            ("🔒  Encrypt Files",      "encrypt"),
+            ("🔓  Decrypt Files",      "decrypt"),
+            ("🗂   Vault Explorer",     "vault_explorer"),
+            ("⚡  Hash & Verify",      "hash"),
         ]
         for text, key in entries:
             item = QListWidgetItem(text)
@@ -1119,7 +1252,7 @@ class Sidebar(QFrame):
             item.setFont(nav_font)
             item.setSizeHint(QSize(220, 44))
             self.navigation.addItem(item)
-        self.navigation.setFixedHeight(204)
+        self.navigation.setFixedHeight(254)  # 5 items × ~50px + spacing
         layout.addWidget(self.navigation)
 
         # Settings
@@ -1150,7 +1283,7 @@ class Sidebar(QFrame):
 
         footer = QLabel("● Local Protected")
         footer.setObjectName("sidebarFooterText")
-        v_label = QLabel("Cyphra v0.2.0 · Zero Telemetry")
+        v_label = QLabel("Cyphra v0.2.1 · Zero Telemetry")
         v_label.setObjectName("sidebarVersion")
 
 
@@ -1184,6 +1317,8 @@ class Sidebar(QFrame):
             if item.data(Qt.ItemDataRole.UserRole) == key:
                 self.navigation.setCurrentItem(item)
                 return
+        # If not found in main nav (shouldn't happen), clear all
+        self.navigation.clearSelection()
 
 
 class MainWindow(QMainWindow):
@@ -1276,11 +1411,12 @@ class MainWindow(QMainWindow):
         # Pages
         self.pages = QStackedWidget()
         self.page_map: dict[str, QWidget] = {}
-        self._add_page("home", HomePage())
-        self._add_page("encrypt", OperationPage(self.adapter, "encrypt"))
-        self._add_page("decrypt", OperationPage(self.adapter, "decrypt"))
-        self._add_page("hash", HashPage(self.adapter))
-        self._add_page("settings", SettingsPage())
+        self._add_page("home",           HomePage())
+        self._add_page("encrypt",        OperationPage(self.adapter, "encrypt"))
+        self._add_page("decrypt",        OperationPage(self.adapter, "decrypt"))
+        self._add_page("hash",           HashPage(self.adapter))
+        self._add_page("vault_explorer", VaultExplorerPage(self.adapter))
+        self._add_page("settings",       SettingsPage())
 
         content_layout.addWidget(self.pages, 1)
         body_layout.addWidget(content, 1)
@@ -1308,11 +1444,12 @@ class MainWindow(QMainWindow):
 
         self.pages.setCurrentWidget(page)
         page_names = {
-            "home": "Dashboard",
-            "encrypt": "Encrypt Files",
-            "decrypt": "Decrypt Files",
-            "hash": "Hash & Integrity",
-            "settings": "Settings",
+            "home":           "Dashboard",
+            "encrypt":        "Encrypt Files",
+            "decrypt":        "Decrypt Files",
+            "hash":           "Hash & Integrity",
+            "vault_explorer": "Vault Explorer",
+            "settings":       "Settings",
         }
         name = page_names.get(key, key.title())
         self.breadcrumbs.setText(f"Workspace  ›  <span style='color: #f8fafc; font-weight: 600;'>{name}</span>")

@@ -491,6 +491,82 @@ class CryptoAdapter:
             return bool(_call(function, actual=actual, expected=expected, left=actual, right=expected))
         return secrets.compare_digest(actual.strip().casefold(), expected.strip().casefold())
 
+    # ------------------------------------------------------------------
+    # Vault Explorer
+    # ------------------------------------------------------------------
+
+    def vault_list(self, source: str | Path, password: str) -> tuple:
+        """Return (metadata, [VaultEntry]) from a .cyphra-vault without extracting."""
+        vault = getattr(self.core, "Vault", None)
+        if vault is None:
+            raise CoreUnavailableError("Cyphra Vault support is not available")
+        return vault.list(source, password=password)
+
+    def vault_extract_single(self, source: str | Path, entry_path: str, password: str) -> bytes:
+        """Return the raw decrypted bytes of a single vault entry."""
+        vault = getattr(self.core, "Vault", None)
+        if vault is None:
+            raise CoreUnavailableError("Cyphra Vault support is not available")
+        return vault.extract_single(source, entry_path, password=password)
+
+    def vault_extract_to(self, source: str | Path, entry_path: str, password: str,
+                         destination: str | Path) -> str:
+        """Extract a single entry to *destination* (a real file path) and return it."""
+        data = self.vault_extract_single(source, entry_path, password)
+        dest = Path(destination)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        return str(dest)
+
+    def vault_rebuild(
+        self,
+        source: str | Path,
+        destination: str | Path,
+        password: str,
+        adds: dict | None = None,
+        removes: set | None = None,
+        renames: dict | None = None,
+        progress: Callable[[int], None] | None = None,
+        cancel_event: Any = None,
+    ) -> None:
+        """Apply staged changes and re-encrypt the vault."""
+        vault = getattr(self.core, "Vault", None)
+        if vault is None:
+            raise CoreUnavailableError("Cyphra Vault support is not available")
+        vault.rebuild(
+            source,
+            destination,
+            password=password,
+            adds=adds,
+            removes=removes,
+            renames=renames,
+            progress=_progress_callback(progress),
+            cancellation=cancel_event,
+        )
+
+    # ------------------------------------------------------------------
+    # Keyfile helpers
+    # ------------------------------------------------------------------
+
+    def generate_keyfile(self, path: str | Path) -> str:
+        """Generate a new 64-byte keyfile at *path* and return the path string."""
+        gen = getattr(self.core, "generate_keyfile", None)
+        if gen is not None:
+            return str(gen(path))
+        # Fallback: use the bundled implementation
+        from cyphra.keyfile import generate_keyfile as _gen
+        return _gen(path)
+
+    def load_keyfile(self, path: str | Path) -> str:
+        """Load a keyfile and return its hex-encoded bytes (usable as a password)."""
+        load = getattr(self.core, "load_keyfile", None)
+        if load is not None:
+            kf = load(path)
+        else:
+            from cyphra.keyfile import load_keyfile as _load
+            kf = _load(path)
+        return kf.hex()
+
 
 def generate_password(length: int = 24, symbols: bool = True) -> str:
     """Generate a password using the system CSPRNG, never ``random``."""
@@ -500,3 +576,13 @@ def generate_password(length: int = 24, symbols: bool = True) -> str:
     if symbols:
         alphabet += "!@#$%^&*()-_=+[]{}:,.?"
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def resolve_key(password: str | None, keyfile_path: str | None) -> str:
+    """Resolve an effective password from *password*, *keyfile_path*, or both.
+
+    This is a convenience wrapper around :func:`cyphra.keyfile.resolve_key`
+    for use by GUI pages that should not import the core directly.
+    """
+    from cyphra.keyfile import resolve_key as _rk
+    return _rk(password, keyfile_path)

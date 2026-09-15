@@ -16,6 +16,13 @@ from .crypto import DEFAULT_ITERATIONS, KEY_SIZE, SALT_SIZE, derive_key
 from .image import Image, ImageInfo
 from .vault import Vault, VaultEntry
 from .service import CryptoService, CancellationToken
+from .keyfile import (
+    generate_keyfile,
+    load_keyfile,
+    keyfile_to_password,
+    combine_password_keyfile,
+    resolve_key,
+)
 
 __all__ = [
     "AuthenticationError", "ContainerError", "FormatError",
@@ -23,4 +30,6 @@ __all__ = [
     "DEFAULT_ITERATIONS", "KEY_SIZE", "SALT_SIZE", "derive_key",
     "Image", "ImageInfo", "Vault", "VaultEntry", "CryptoService",
     "CancellationToken",
+    "generate_keyfile", "load_keyfile", "keyfile_to_password",
+    "combine_password_keyfile", "resolve_key",
 ]

@@ -31,6 +31,7 @@ from .core_adapter import (
     KDF_METADATA,
     CryptoAdapter,
     generate_password,
+    resolve_key,
 )
 from .workers import OperationWorker
 from .widgets import (
@@ -38,6 +39,7 @@ from .widgets import (
     AnimatedStackedWidget,
     DropZone,
     FilePill,
+    KeySourceSelector,
     PasswordField,
     ProgressPanel,
     ResultBanner,
@@ -102,6 +104,17 @@ class HomePage(QWidget):
         actions.addWidget(encrypt_card)
         actions.addWidget(decrypt_card)
         layout.addLayout(actions)
+
+        # Vault Explorer card
+        explorer_card, explorer_layout = card(
+            "Vault Explorer",
+            "Browse, edit, add and remove files inside a .cyphra-vault without extracting the entire archive.",
+        )
+        exp_btn = _button("Open Vault Explorer  →", lambda: self.navigate.emit("vault_explorer"), True, "primaryButton")
+        exp_btn.setObjectName("explorerHomeButton")
+        explorer_layout.addStretch()
+        explorer_layout.addWidget(exp_btn)
+        layout.addWidget(explorer_card)
 
         # Utilities & Hash
         quick_card, quick_layout = card(
@@ -194,7 +207,7 @@ class OperationPage(QWidget):
             self._show_step(0)
         elif step_index == 1 and self.files:
             self._show_step(1)
-        elif step_index == 2 and self.files and self.password.text():
+        elif step_index == 2 and self.files and self.key_source.has_valid_credentials():
             self._show_step(2)
 
     @property
@@ -288,20 +301,22 @@ class OperationPage(QWidget):
         if self.mode == "encrypt":
             layout.addLayout(
                 self._header(
-                    "Set Encryption Password",
-                    "Choose a strong passphrase to encrypt your data. Cyphra does not store or recover passwords.",
+                    "Set Encryption Key",
+                    "Choose a password, a keyfile, or both to protect your data. Cyphra never stores credentials.",
                 )
             )
-            pwd_card, pwd_layout = card(
-                "Passphrase Protection",
-                "Use a combination of words, numbers, and symbols, or generate a cryptographically random one.",
+            key_card, key_layout = card(
+                "Authentication & Key Source",
+                "Password-only, keyfile-only, or require both to decrypt (strongest).",
             )
-            self.password = PasswordField(label="Master password", mode="encrypt")
-            pwd_layout.addWidget(self.password)
+            self.key_source = KeySourceSelector(mode="encrypt")
+            # Backward-compat alias so all existing self.password.* references still work
+            self.password = self.key_source.password_field
+            key_layout.addWidget(self.key_source)
 
             gen_btn = _button("🎲  Generate Secure Password", self._generate_password, False, "generatorButton")
-            pwd_layout.addWidget(gen_btn, alignment=Qt.AlignmentFlag.AlignLeft)
-            layout.addWidget(pwd_card)
+            key_layout.addWidget(gen_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+            layout.addWidget(key_card)
 
             # Cryptographic Algorithm & KDF Card
             crypto_card, crypto_layout = card(
@@ -355,18 +370,19 @@ class OperationPage(QWidget):
         else:
             layout.addLayout(
                 self._header(
-                    "Enter Decryption Password",
-                    "Provide the password that was used when encrypting this container.",
+                    "Enter Decryption Key",
+                    "Provide the password, keyfile, or both that were used when encrypting this container.",
                 )
             )
-            pwd_card, pwd_layout = card(
-                "Decryption Credentials",
-                "Enter the original password for this file. It will be verified against the container header.",
+            key_card, key_layout = card(
+                "Authentication & Key Source",
+                "Select the same key type that was used for encryption.",
             )
-            # Decrypt mode: NO generate password button, NO password strength evaluation!
-            self.password = PasswordField(label="Decryption password", mode="decrypt")
-            pwd_layout.addWidget(self.password)
-            layout.addWidget(pwd_card)
+            self.key_source = KeySourceSelector(mode="decrypt")
+            # Backward-compat alias
+            self.password = self.key_source.password_field
+            key_layout.addWidget(self.key_source)
+            layout.addWidget(key_card)
 
         # Output location configuration card
         dest_title = "Encrypted Output Destination" if self.mode == "encrypt" else "Extraction & Output Destination"
@@ -642,13 +658,20 @@ class OperationPage(QWidget):
         return KDF_METADATA.get(name, {}).get("id", 0)
 
     def _to_review(self) -> None:
-        if not self.password.text():
-            self.password.input.setFocus()
-            if self.mode == "encrypt":
-                self.password.strength.setText("A password is required to encrypt your files")
-                self.password.strength.setStyleSheet("color: #f43f5e;")
+        if not self.key_source.has_valid_credentials():
+            mode = self.key_source.source_mode
+            if mode == "password":
+                self.password.input.setFocus()
+                if self.mode == "encrypt":
+                    self.password.strength.setText("A password is required to encrypt your files")
+                    self.password.strength.setStyleSheet("color: #f43f5e;")
+                else:
+                    self.password.input.setPlaceholderText("Decryption password is required!")
+            elif mode == "keyfile":
+                self.key_source._kf_path.setPlaceholderText("⚠ A keyfile is required")
             else:
-                self.password.input.setPlaceholderText("Decryption password is required!")
+                self.password.strength.setText("Both password and keyfile are required")
+                self.password.strength.setStyleSheet("color: #f43f5e;")
             return
         if not self.destination_input.text():
             self._choose_destination()
@@ -660,22 +683,32 @@ class OperationPage(QWidget):
             files_str += f"<br>• <i>...and {len(self.files) - 5} more file(s)</i>"
 
         op_name = "Encryption" if self.mode == "encrypt" else "Decryption"
-        crypto_details = ""
+        key_mode_labels = {"password": "Password", "keyfile": "Keyfile", "both": "Password + Keyfile"}
+        key_desc = key_mode_labels.get(self.key_source.source_mode, "")
+        crypto_details = f"<br>Key: <b>{key_desc}</b>"
         if self.mode == "encrypt":
             c_name = self.cipher_combo.currentText().split(" (")[0]
             k_name = self.kdf_combo.currentText().split(" (")[0]
-            crypto_details = f"<br>Cipher: <b>{c_name}</b><br>Key Derivation: <b>{k_name}</b>"
+            crypto_details += f"<br>Cipher: <b>{c_name}</b><br>Key Derivation: <b>{k_name}</b>"
 
+        cred_hint = f"{'•' * len(self.password.text())}" if self.key_source.source_mode in ("password", "both") else "[keyfile]"
         self.review_text.setText(
             f"Operation: <b>{op_name}</b><br><br>"
             f"Target item(s) (<b>{len(self.files)} total</b>):<br>{files_str}<br><br>"
             f"Output Destination: <b>{self.destination}</b>{crypto_details}<br><br>"
-            f"Passphrase: <b>{'•' * len(self.password.text())}</b>"
+            f"Credential: <b>{cred_hint}</b>"
         )
         self._show_step(2)
 
     def _start(self) -> None:
-        password = self.password.text()
+        try:
+            effective_password = self.key_source.get_effective_password()
+        except ValueError as exc:
+            self.result_title.setText(f"{self.verb}ion Failed")
+            self.result.show_error(str(exc))
+            self._show_step(4)
+            return
+
         sources = list(self.files)
         destination = self.destination
         cipher_id = self.get_cipher_id()
@@ -703,7 +736,7 @@ class OperationPage(QWidget):
                     res = self.operation(
                         source,
                         target,
-                        password,
+                        effective_password,
                         progress=progress,
                         cancel_event=cancel_event,
                         cipher_id=cipher_id,
@@ -714,7 +747,7 @@ class OperationPage(QWidget):
                     res = self.operation(
                         source,
                         target,
-                        password,
+                        effective_password,
                         progress=progress,
                         cancel_event=cancel_event,
                         overwrite=overwrite_val,
@@ -808,7 +841,7 @@ class OperationPage(QWidget):
 
     def reset(self) -> None:
         self.files.clear()
-        self.password.clear()
+        self.key_source.clear()
         self.destination_input.clear()
         self._files_selected([])
         self.progress_panel.cancel.setEnabled(True)
@@ -1388,7 +1421,7 @@ class SettingsPage(QWidget):
 
         about_text = QVBoxLayout()
         about_text.setSpacing(4)
-        v_label = QLabel("Cyphra Vault v0.2.0 · High-Assurance Multi-Cipher Cryptographic Vault")
+        v_label = QLabel("Cyphra Vault v0.2.1 · High-Assurance Multi-Cipher Cryptographic Vault")
         v_label.setObjectName("aboutTitle")
 
         d_label = QLabel(
